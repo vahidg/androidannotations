@@ -15,18 +15,23 @@
  */
 package com.googlecode.androidannotations.helper;
 
+import java.util.Iterator;
+
 import javax.lang.model.element.TypeElement;
-import javax.lang.model.type.DeclaredType;
-import javax.lang.model.type.NoType;
-import javax.lang.model.type.TypeMirror;
 
 import com.googlecode.androidannotations.processing.EBeanHolder;
+import com.sun.codemodel.JPackage;
 
 /**
  * @author Eric Kok
  */
 public class SherlockHelper {
 
+	/**
+	 * The name 'root' package in the ActionBarSherlock library that contains
+	 * Fragment and Activity types, e.g. <tt>SherlockActivity</tt>
+	 */
+	public static final String SHERLOCK_ROOT_PACKAGE = "com.actionbarsherlock.app";
 	private final AnnotationHelper annotationHelper;
 
 	public SherlockHelper(AnnotationHelper annotationHelper) {
@@ -39,14 +44,7 @@ public class SherlockHelper {
 	 */
 	public boolean usesSherlock(EBeanHolder holder) {
 		TypeElement typeElement = annotationHelper.typeElementFromQualifiedName(holder.eBean._extends().fullName());
-
-		TypeMirror superType;
-		while (!((superType = typeElement.getSuperclass()) instanceof NoType)) {
-			typeElement = (TypeElement) ((DeclaredType) superType).asElement();
-			if (typeElement.getQualifiedName().toString().startsWith("com.actionbarsherlock.app")) {
-				return true;
-			}
-		}
-		return false;
+		Iterator<JPackage> packageIterator = holder.codeModel().packages();
+		return annotationHelper.isSubtypeOfPackage(typeElement, SHERLOCK_ROOT_PACKAGE, packageIterator);
 	}
 }

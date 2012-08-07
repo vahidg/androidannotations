@@ -87,7 +87,7 @@ public class NonConfigurationInstanceProcessor implements ElementProcessor {
 
 			String getLastNonConfigurationInstanceName = "getLastNonConfigurationInstance";
 			String onRetainNonConfigurationInstanceName = "onRetainNonConfigurationInstance";
-			if (annotationHelper.isSubtype(typeElement.asType(), fragmentActivityType)) {
+			if (annotationHelper.isSubtype(typeElement.asType(), fragmentActivityType, codeModel.packages())) {
 				getLastNonConfigurationInstanceName = "getLastCustomNonConfigurationInstance";
 				onRetainNonConfigurationInstanceName = "onRetainCustomNonConfigurationInstance";
 			}

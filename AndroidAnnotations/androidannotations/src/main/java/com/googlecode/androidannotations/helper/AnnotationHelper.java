@@ -20,6 +20,7 @@ import static com.googlecode.androidannotations.helper.ModelConstants.GENERATION
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.List;
 
 import javax.annotation.processing.ProcessingEnvironment;
@@ -30,12 +31,12 @@ import javax.lang.model.element.NestingKind;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.type.DeclaredType;
 import javax.lang.model.type.ErrorType;
+import javax.lang.model.type.NoType;
 import javax.lang.model.type.TypeKind;
 import javax.lang.model.type.TypeMirror;
 import javax.lang.model.util.Elements;
 import javax.lang.model.util.Types;
 import javax.tools.Diagnostic;
-import javax.tools.Diagnostic.Kind;
 
 import com.googlecode.androidannotations.annotations.OptionsItem;
 import com.googlecode.androidannotations.annotations.ResId;
@@ -45,6 +46,7 @@ import com.googlecode.androidannotations.rclass.IRClass.Res;
 import com.googlecode.androidannotations.rclass.IRInnerClass;
 import com.googlecode.androidannotations.rclass.RInnerClass;
 import com.sun.codemodel.JFieldRef;
+import com.sun.codemodel.JPackage;
 
 public class AnnotationHelper {
 
@@ -77,52 +79,82 @@ public class AnnotationHelper {
 	 * @see Types#isSubtype(TypeMirror, TypeMirror)
 	 */
 	public boolean isSubtype(TypeMirror potentialSubtype, TypeMirror potentialSupertype) {
+		return isSubtype(potentialSubtype, potentialSupertype, null);
+	}
 
-		if (processingEnv.getTypeUtils().isSubtype(potentialSubtype, potentialSupertype)) {
-			return true;
-		} else {
+	public boolean isSubtype(TypeMirror potentialSubtype, TypeMirror potentialSupertype, Iterator<JPackage> packageIterator) {
+		boolean result = processingEnv.getTypeUtils().isSubtype(potentialSubtype, potentialSupertype);
 
-			if (potentialSubtype instanceof DeclaredType) {
+		if (!result) {
+			TypeElement potentialSubDeclaredElement = (TypeElement) ((DeclaredType) potentialSubtype).asElement();
+			TypeMirror superclassTypeMirror = potentialSubDeclaredElement.getSuperclass();
 
-				DeclaredType potentialDeclaredSubtype = (DeclaredType) potentialSubtype;
-
-				Element potentialSubElement = potentialDeclaredSubtype.asElement();
-				if (potentialSubElement instanceof TypeElement) {
-					TypeElement potentialSubDeclaredElement = (TypeElement) potentialSubElement;
-
-					TypeMirror superclassTypeMirror = potentialSubDeclaredElement.getSuperclass();
-
-					if (isRootObjectClass(superclassTypeMirror)) {
-						return false;
-					} else {
-						if (superclassTypeMirror instanceof ErrorType) {
-
-							ErrorType errorType = (ErrorType) superclassTypeMirror;
-
-							Element errorElement = errorType.asElement();
-
-							String errorElementSimpleName = errorElement.getSimpleName().toString();
-							if (errorElementSimpleName.endsWith(GENERATION_SUFFIX)) {
-								return true;
-							} else {
-								processingEnv.getMessager().printMessage(Kind.NOTE, String.format("The supertype %s of the potential subElement %s of potential supertype %s is an ErrorType that doesn't end with %s", errorElement, potentialSubElement, potentialSupertype, GENERATION_SUFFIX));
-								return false;
-							}
-
-						} else {
-							return isSubtype(superclassTypeMirror, potentialSupertype);
-						}
-					}
+			if (!isRootObjectClass(superclassTypeMirror) && isGeneratedErrorType(superclassTypeMirror)) {
+				if (packageIterator != null) {
+					TypeMirror parent = findSourceTypeMirror(superclassTypeMirror.toString(), packageIterator);
+					result = isSubtype(parent, potentialSupertype, packageIterator);
 				} else {
-					processingEnv.getMessager().printMessage(Kind.NOTE, String.format("The potential subElement %s of potential supertype %s is not a TypeElement but a %s", potentialSubElement, potentialSupertype, potentialSubElement.getClass()));
-					return false;
+					throw new RuntimeException("Cannot determine supertype");
 				}
-
-			} else {
-				processingEnv.getMessager().printMessage(Kind.NOTE, String.format("The potential subtype %s of potential supertype %s is not a DeclaredType but a %s", potentialSubtype, potentialSupertype, potentialSubtype.getClass()));
-				return false;
 			}
 		}
+
+		return result;
+	}
+
+	public boolean isSubtypeOfPackage(TypeElement typeElement, String potentialSuperPackage, Iterator<JPackage> packageIterator) {
+		TypeMirror superType;
+		while (!((superType = typeElement.getSuperclass()) instanceof NoType)) {
+			typeElement = (TypeElement) ((DeclaredType) superType).asElement();
+			String className = typeElement.getQualifiedName().toString();
+			if (className.startsWith(potentialSuperPackage)) {
+				return true;
+			} else if (isGeneratedErrorType(typeElement.asType())) {
+				// skip this one and jump to parent
+				TypeMirror foundParent = findSourceTypeMirror(className, packageIterator);
+				return isSubtypeOfPackage((TypeElement) ((DeclaredType) foundParent).asElement(), potentialSuperPackage, packageIterator);
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * This method checks whether the parameter is of type {@link ErrorType} and
+	 * its (class) name ends with the the generation suffix, e.g. an underscore.
+	 * 
+	 * @param type
+	 *            The type to be checked
+	 * @return whether parameter is an ErrorType and a generated class
+	 */
+	private boolean isGeneratedErrorType(TypeMirror type) {
+		if (type instanceof ErrorType) {
+			ErrorType errorType = (ErrorType) type;
+			Element errorElement = errorType.asElement();
+			String errorElementSimpleName = errorElement.getSimpleName().toString();
+			return errorElementSimpleName.endsWith(GENERATION_SUFFIX);
+		}
+		return false;
+	}
+
+	/**
+	 * 
+	 * @param className
+	 * @param packageIterator
+	 * @return
+	 */
+	private TypeMirror findSourceTypeMirror(String className, Iterator<JPackage> packageIterator) {
+		if (packageIterator != null) {
+			className = className.substring(0, className.indexOf(GENERATION_SUFFIX));
+			while (packageIterator.hasNext()) {
+				JPackage jPackage = packageIterator.next();
+				String sourceFullName = jPackage.name() + "." + className;
+				TypeElement source = getElementUtils().getTypeElement(sourceFullName);
+				if (source != null) {
+					return source.asType();
+				}
+			}
+		}
+		return null;
 	}
 
 	private boolean isRootObjectClass(TypeMirror superclassTypeMirror) {
